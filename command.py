@@ -105,6 +105,65 @@ class Command:
     
     await self.command_loop()
   
+  async def execute_command(self, command_input):
+    """Execute a single command without entering the interactive loop"""
+    command_parts = command_input.split()
+    command = command_parts[0] if command_parts else ""
+    
+    # Initialize audible_obj if not already done
+    if not self.audible_obj and command not in AUTHLESS_COMMANDS:
+        try:
+            credentials = audible.Authenticator.from_file(f"{artifacts_root_directory}/secrets/credentials.json")
+            self.audible_obj = AudibleAPI(credentials)
+        except FileNotFoundError:
+            print("\nNo Audible credentials found, please run 'authenticate' to generate them")
+            return
+    
+    # Handle commands with simple parameters (like "export_bookmarks_simple 0")
+    if len(command_parts) > 1 and command == "export_bookmarks_simple":
+        try:
+            book_index = int(command_parts[1])
+            await getattr(self.audible_obj, f"cmd_{command}")(book_index)
+            return
+        except (ValueError, IndexError):
+            print("Invalid book index")
+            return
+    
+    # Original kwargs parsing for other commands
+    additional_kwargs = command_input.replace(command, '')
+    _kwargs = {}
+
+    if additional_kwargs:
+        for kwarg in additional_kwargs.split(" --"):
+            if kwarg == "":
+                continue
+            li_kwarg = kwarg.split("=")
+
+            if not len(li_kwarg) > 1:
+                await self.invalid_kwarg_callback()
+                return
+
+            _kwargs[li_kwarg[0]] = li_kwarg[1]
+        
+    # Takes the command supplied and sees if we have a function with the prefix cmd_ that we can execute with the given kwargs
+    if command == "help":
+      self.show_help()
+    elif command == "authenticate":
+        self.audible_obj = await AudibleAPI.authenticate()
+    elif command == "readwise_authenticate":
+        self.readwise_obj = await Readwise.authenticate()
+    elif command == "quit" or command == "exit":
+      return
+    elif command.startswith("readwise"):
+        if self.audible_obj:
+            books = await self.audible_obj.get_book_selection()
+            command = command.replace("readwise_", "")
+            await getattr(self.readwise_obj, f"cmd_{command}")(books, **_kwargs)
+        else:
+            print("Audible authentication required")
+    else:    
+        await getattr(self.audible_obj, f"cmd_{command}")(**_kwargs)
+
   # Callbacks
   async def invalid_command_callback(self):
       print("Invalid command, try again")      

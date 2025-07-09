@@ -363,16 +363,16 @@ class AudibleAPI:
             print(f"{index}: {book_title}")
 
         book_selection = input(
-            "Enter the index number of the book you would like to download, or enter --all for all available books: \n")
+            "Enter the index number of the book you would like to download, or press ENTER for all available books: \n")
 
-        if book_selection == "--all":
+        if book_selection == "" or book_selection == "--all":
             li_books = [{"title": book.get("title", 'untitled'), "asin": book["asin"]}
                         for book in self.library["items"]]
 
         else:
             try:
-                li_books = [{"title": self.library["items"][int(book_selection)],
-                             "asin":self.library["items"][int(book_selection)].get("asin", None)}]
+                li_books = [{"title": self.library["items"][int(book_selection)].get("title", 'untitled'),
+                             "asin": self.library["items"][int(book_selection)].get("asin", None)}]
             except (IndexError, ValueError):
                 print("Invalid selection")                
         return li_books
@@ -780,12 +780,16 @@ class AudibleAPI:
                     
                     # Process bookmarks into a simple format
                     for bookmark in li_bookmarks:
+                        # Ensure positions are integers
+                        start_pos = int(bookmark.get("startPosition", 0))
+                        end_pos = int(bookmark.get("endPosition", start_pos + 30000))
+                        
                         bookmark_data = {
                             "book_title": _title,
                             "asin": asin,
                             "type": bookmark.get("type", ""),
-                            "start_position": bookmark.get("startPosition", 0),
-                            "end_position": bookmark.get("endPosition", bookmark.get("startPosition", 0) + 30000),
+                            "start_position": start_pos,
+                            "end_position": end_pos,
                             "text": bookmark.get("text", ""),
                             "note": bookmark.get("note", ""),
                             "creation_time": bookmark.get("creationTime", "")
@@ -796,11 +800,14 @@ class AudibleAPI:
                 print(f"Error getting bookmarks for {_title}: {e}")
                 continue
         
-        # Save to bookmarks.json in current directory
+        # Save to bookmarks.json in parent directory (main bookmarker directory)
         import json
         import os
         
-        output_file = "bookmarks.json"
+        # Get the parent directory path
+        parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        output_file = os.path.join(parent_dir, "bookmarks.json")
+        
         with open(output_file, 'w') as f:
             json.dump(all_bookmarks, f, indent=2)
         
@@ -881,11 +888,14 @@ class AudibleAPI:
                 print(f"Error getting bookmarks for {_title}: {e}")
                 continue
         
-        # Save to bookmarks.json in current directory
+        # Save to bookmarks.json in parent directory (main bookmarker directory)
         import json
         import os
         
-        output_file = "bookmarks.json"
+        # Get the parent directory path
+        parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        output_file = os.path.join(parent_dir, "bookmarks.json")
+        
         with open(output_file, 'w') as f:
             json.dump(all_bookmarks, f, indent=2)
         
