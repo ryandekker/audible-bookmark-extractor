@@ -4,10 +4,14 @@ import sys
 import asyncio
 import requests
 from getpass import getpass
+import webbrowser
+import io
+from datetime import datetime
 
 import pandas as pd
 import pandas.io.formats.excel
 import audible
+import httpx
 
 from pydub import AudioSegment
 
@@ -46,28 +50,283 @@ class AudibleAPI:
         self.library = {}
 
     @classmethod
-    async def authenticate(self) -> "AudibleAPI":
+    async def authenticate(cls) -> "AudibleAPI":
         secrets_dir_path = os.path.join(artifacts_root_directory, "secrets")
         credentials_path = os.path.join(secrets_dir_path, "credentials.json")
+        
         if os.path.exists(credentials_path):
             print(f"You are already authenticated, to switch accounts, delete secrets directory under {artifacts_root_directory} and try again")
-        email = input("Audible Email: ")
-        password = getpass(
-            "Enter Password (will be hidden, press ENTER when done): ")
-        print(', '.join(country_code_mapping))
-        locale = input("\nPlease enter your locale from the list above: ")
-
-        auth = audible.Authenticator.from_login(
-            email,
-            password,
-            locale=locale,
-            with_username=False
-        )
+            return None
+            
+        print("=== Audible Authentication ===")
+        print("This will authenticate with your Audible account.")
+        print("Note: Two-Factor Authentication (2FA) must be enabled on your Amazon account.")
+        print()
         
-        os.makedirs(secrets_dir_path, exist_ok=True)
-        auth.to_file(credentials_path)
-        print("Credentials saved locally successfully")
-        return AudibleAPI(auth)
+        return await cls._authenticate_with_browser_assistance(secrets_dir_path, credentials_path)
+
+    @classmethod
+    async def _authenticate_with_browser_assistance(cls, secrets_dir_path, credentials_path):
+        """Enhanced authentication with browser assistance for 2FA issues"""
+        print("=== Enhanced Authentication Process ===")
+        print("If you're having trouble with 2FA codes, try this process:")
+        print("1. First, log into Amazon.com in your browser to verify your account is working")
+        print("2. Make sure 2FA is properly configured in your Amazon account settings")
+        print("3. Have your phone/email ready for receiving verification codes")
+        print()
+        
+        browser_prep = input("Would you like me to open Amazon.com in your browser first? [y/N]: ").strip().lower()
+        if browser_prep == 'y':
+            print("Opening Amazon.com in your browser...")
+            try:
+                webbrowser.open("https://amazon.com")
+                print("Please log into Amazon.com in your browser to verify your account is working.")
+                input("Press Enter when you've successfully logged into Amazon.com...")
+            except Exception as e:
+                print(f"Could not open browser: {e}")
+                print("Please manually visit https://amazon.com and log in, then come back here.")
+                input("Press Enter when ready to continue...")
+        
+        email = input("\nAudible Email: ")
+        password = getpass("Enter Password (will be hidden, press ENTER when done): ")
+        
+        print("\nAvailable regions:")
+        print(', '.join(country_code_mapping.keys()))
+        locale = input("Please enter your locale from the list above: ")
+        
+        if locale not in country_code_mapping:
+            print(f"Invalid locale. Please choose from: {', '.join(country_code_mapping.keys())}")
+            return None
+
+        def captcha_callback(captcha_url: str) -> str:
+            """Helper function for handling captcha with browser support."""
+            print(f"\n=== CAPTCHA Required ===")
+            print(f"A CAPTCHA challenge has been presented.")
+            
+            try:
+                # Try to open the CAPTCHA in the default browser
+                print("Opening CAPTCHA in your default browser...")
+                webbrowser.open(captcha_url)
+                print("Please view the CAPTCHA in your browser and enter the solution below.")
+            except Exception as e:
+                print(f"Could not open browser automatically: {e}")
+                print(f"Please manually open this URL in your browser:")
+                print(f"{captcha_url}")
+            
+            while True:
+                guess = input("Enter CAPTCHA solution: ").strip()
+                if guess:
+                    return guess
+                print("Please enter a valid CAPTCHA solution.")
+
+        def cvf_callback() -> str:
+            """Helper function for handling CVF (Challenge Verification Form) codes."""
+            print(f"\n=== Two-Factor Authentication Required ===")
+            print(f"🔍 DEBUG: CVF callback has been triggered by the Audible library")
+            print(f"🔍 DEBUG: This means Amazon is requesting 2FA verification")
+            print(f"🔍 DEBUG: Timestamp: {datetime.now().strftime('%H:%M:%S')}")
+            print("Amazon is requesting a verification code for two-factor authentication.")
+            print()
+            
+            # Enhanced troubleshooting for 2FA issues
+            print("🔧 TROUBLESHOOTING: Not receiving codes?")
+            print("1. Check your Amazon account 2FA settings at: https://amazon.com/myaccount")
+            print("2. Ensure your phone number and email are correct and verified")
+            print("3. Try requesting a new code if the current one expires")
+            print("4. Check spam/junk folders for email codes")
+            print("5. Make sure your phone has good signal for SMS codes")
+            print()
+            
+            print("You should receive a verification code via one of these methods:")
+            print("• SMS text message to your registered phone number")
+            print("• Email to your registered email address") 
+            print("• Push notification through the Amazon mobile app")
+            print("• Authentication app (like Google Authenticator)")
+            print()
+            
+            # Offer to open Amazon account settings
+            settings_help = input("Open Amazon account settings in browser to check 2FA setup? [y/N]: ").strip().lower()
+            if settings_help == 'y':
+                try:
+                    amazon_url = f"https://amazon{country_code_mapping.get(locale, '.com')}/myaccount"
+                    print(f"🔍 DEBUG: Opening URL: {amazon_url}")
+                    webbrowser.open(amazon_url)
+                    print(f"Opened {amazon_url} in your browser.")
+                    print("Check your 2FA settings and make sure they're properly configured.")
+                except Exception as e:
+                    print(f"Could not open browser: {e}")
+                    print(f"Please manually visit: https://amazon{country_code_mapping.get(locale, '.com')}/myaccount")
+            
+            print("\n🔍 DEBUG: Amazon should be sending you a verification code now...")
+            print("🔍 DEBUG: This usually happens immediately after you enter your password")
+            print("🔍 DEBUG: Check ALL possible delivery methods (SMS, email, app notifications)")
+            print()
+            print("💡 TIP: If you don't receive a code within 1-2 minutes:")
+            print("   1. Try logging into Amazon.com in a browser with the same credentials")
+            print("   2. This will show you what 2FA method Amazon is actually using")
+            print("   3. You might need to update your 2FA settings in Amazon")
+            print()
+            
+            # Add option to check Amazon login in browser
+            browser_check = input("Want me to open Amazon login in browser to test your 2FA setup? [y/N]: ").strip().lower()
+            if browser_check == 'y':
+                try:
+                    login_url = f"https://amazon{country_code_mapping.get(locale, '.com')}/ap/signin"
+                    print(f"🔍 DEBUG: Opening Amazon login: {login_url}")
+                    webbrowser.open(login_url)
+                    print("Try logging in with the same email/password and see what 2FA options appear.")
+                    input("Press Enter when you've tested the login in your browser...")
+                except Exception as e:
+                    print(f"Could not open browser: {e}")
+            
+            print("\nWaiting for your verification code...")
+            print("Tip: Codes are usually 6 digits and expire quickly (within a few minutes)")
+            
+            attempts = 0
+            max_attempts = 5  # Increased from 3 to 5
+            
+            while attempts < max_attempts:
+                print(f"\n🔍 DEBUG: Attempt {attempts + 1} of {max_attempts}")
+                print(f"🔍 DEBUG: Current time: {datetime.now().strftime('%H:%M:%S')}")
+                
+                # Add more detailed prompting
+                if attempts == 0:
+                    prompt_msg = f"Enter the 6-digit verification code"
+                elif attempts == 1:
+                    prompt_msg = f"Try again - enter the verification code (check SMS/email)"
+                elif attempts == 2:
+                    prompt_msg = f"Still waiting - enter the code (check all devices/apps)"
+                else:
+                    prompt_msg = f"Last chances - enter the verification code"
+                
+                cvf_code = input(f"{prompt_msg}: ").strip()
+                
+                print(f"🔍 DEBUG: You entered: '{cvf_code}' (length: {len(cvf_code)})")
+                
+                if cvf_code and len(cvf_code) >= 4:  # Accept 4+ digits
+                    print(f"🔍 DEBUG: Code format looks valid, returning to Audible library...")
+                    return cvf_code
+                
+                attempts += 1
+                print(f"🔍 DEBUG: Code format invalid (too short or empty)")
+                
+                if attempts < max_attempts:
+                    print("Invalid code format. Please try again.")
+                    
+                    # Offer more specific help based on attempt number
+                    if attempts == 1:
+                        print("💡 TIP: Check your text messages and email (including spam folder)")
+                    elif attempts == 2:
+                        print("💡 TIP: Try checking Amazon mobile app notifications")
+                        print("💡 TIP: Or try generating a new code if you have an authenticator app")
+                    elif attempts == 3:
+                        print("💡 TIP: The code might have expired, try requesting a new one")
+                    
+                    retry = input("Request a new code from Amazon? [y/N]: ").strip().lower()
+                    if retry == 'y':
+                        print("🔍 DEBUG: User requested new code generation")
+                        print("Please request a new verification code from Amazon and try again.")
+                        print("🔍 DEBUG: Wait for the new code before entering it...")
+                else:
+                    print("\nMax attempts reached. Please check your 2FA setup and try again later.")
+                    print("🔍 DEBUG: Exceeded maximum attempts, raising exception")
+                    print("Make sure:")
+                    print("• 2FA is enabled on your Amazon account")
+                    print("• Your phone number and email are verified")
+                    print("• You're checking the right device/email for codes")
+                    print("• Your account doesn't have any security restrictions")
+                    raise Exception("Too many failed verification attempts")
+
+        try:
+            print("\nAttempting to authenticate with Audible...")
+            print("🔍 DEBUG: Starting authentication process...")
+            print("This may take a moment and might require solving a CAPTCHA or entering a 2FA code...")
+            
+            # Add timeout and retry logic
+            max_auth_attempts = 3
+            for auth_attempt in range(max_auth_attempts):
+                try:
+                    print(f"🔍 DEBUG: Authentication attempt {auth_attempt + 1} of {max_auth_attempts}")
+                    print(f"🔍 DEBUG: Calling audible.Authenticator.from_login() at {datetime.now().strftime('%H:%M:%S')}")
+                    
+                    auth = audible.Authenticator.from_login(
+                        email,
+                        password,
+                        locale=locale,
+                        with_username=False,
+                        captcha_callback=captcha_callback,
+                        cvf_callback=cvf_callback
+                    )
+                    
+                    print(f"🔍 DEBUG: Authentication successful at {datetime.now().strftime('%H:%M:%S')}")
+                    break
+                    
+                except Exception as auth_error:
+                    error_msg = str(auth_error).lower()
+                    print(f"🔍 DEBUG: Authentication attempt {auth_attempt + 1} failed: {auth_error}")
+                    
+                    if "timeout" in error_msg or "timed out" in error_msg:
+                        if auth_attempt < max_auth_attempts - 1:
+                            wait_time = (auth_attempt + 1) * 10  # 10, 20, 30 seconds
+                            print(f"⏱️  Network timeout detected. Waiting {wait_time} seconds before retry...")
+                            print("💡 TIP: This is usually a temporary server issue, not a problem with your credentials")
+                            import time
+                            time.sleep(wait_time)
+                            continue
+                        else:
+                            print("❌ Multiple timeout errors - this appears to be a server/network issue")
+                            print("🔧 TROUBLESHOOTING TIPS:")
+                            print("• Try again in a few minutes - Audible servers may be busy")
+                            print("• Check your internet connection stability")
+                            print("• Try using a different network (mobile hotspot, etc.)")
+                            print("• The authentication worked but the server response was slow")
+                            return None
+                    else:
+                        # Re-raise non-timeout errors immediately
+                        raise auth_error
+            else:
+                # This should not happen due to the break, but just in case
+                print("❌ All authentication attempts failed")
+                return None
+            
+            print("🔍 DEBUG: Saving credentials to file...")
+            os.makedirs(secrets_dir_path, exist_ok=True)
+            auth.to_file(credentials_path)
+            print("✅ Authentication successful!")
+            print("✅ Credentials saved locally")
+            print(f"🔍 DEBUG: Process completed at {datetime.now().strftime('%H:%M:%S')}")
+            return cls(auth)
+            
+        except Exception as e:
+            print(f"🔍 DEBUG: Final exception caught: {e}")
+            # Handle all authentication errors generically since the specific exception classes
+            # may vary between audible library versions
+            error_message = str(e).lower()
+            
+            if any(keyword in error_message for keyword in ['login', 'authentication', 'credentials', 'password']):
+                print(f"❌ Login failed: {e}")
+                print("\n🔧 TROUBLESHOOTING TIPS:")
+                print("• Verify your email and password are correct")
+                print("• Ensure 2FA is properly set up on your Amazon account") 
+                print("• Try logging into Amazon.com in a browser first")
+                print("• Check that you're using the correct regional store")
+                print("• Wait a few minutes and try again (rate limiting)")
+            elif any(keyword in error_message for keyword in ['verification', 'cvf', '2fa', 'code']):
+                print(f"❌ 2FA verification failed: {e}")
+                print("\n🔧 TROUBLESHOOTING TIPS:")
+                print("• Make sure you entered the correct verification code")
+                print("• Request a new code if the previous one expired")
+                print("• Check your 2FA setup in Amazon account settings")
+                print("• Try the verification code as soon as you receive it")
+            else:
+                print(f"❌ Authentication failed: {e}")
+                print("\n🔧 TROUBLESHOOTING TIPS:")
+                print("• Check your internet connection")
+                print("• Try again in a few minutes")
+                print("• Verify your Amazon account is in good standing")
+                print("• Make sure 2FA is properly configured")
+            
+            return None
 
     # Gets information about a book
     async def get_book_infos(self, asin):
@@ -246,7 +505,13 @@ class AudibleAPI:
 
     def get_bookmarks(self, book):
         asin = book.get("asin")
-        _title = book.get("title", {}).get("title", 'untitled')
+        # Handle both string and nested dictionary formats for title
+        title_value = book.get("title", {})
+        if isinstance(title_value, str):
+            _title = title_value
+        else:
+            _title = title_value.get("title", "untitled")
+        
         if not _title:
             return
 
@@ -318,8 +583,13 @@ class AudibleAPI:
 
         for book in li_books:
             asin = book.get("asin")
-            # Weird for some reason the title is doubled nested here, fix later
-            _title = book.get("title", {}).get("title", {})
+            # Handle both string and nested dictionary formats for title
+            title_value = book.get("title", {})
+            if isinstance(title_value, str):
+                _title = title_value
+            else:
+                _title = title_value.get("title", "untitled")
+            
             if not _title:
                 return
 
@@ -347,10 +617,24 @@ class AudibleAPI:
         jsonHighlights = []
         
         for book in li_books:
-
-            _title = book.get("title", {}).get("title", {})
-            _authors = book.get("title", {}).get("authors", {})
-            allAuthors = ", ".join(item['name'] for item in _authors)
+            # Handle both string and nested dictionary formats for title
+            title_value = book.get("title", {})
+            if isinstance(title_value, str):
+                _title = title_value
+            else:
+                _title = title_value.get("title", "untitled")
+            
+            # Handle authors similarly
+            authors_value = book.get("title", {})
+            if isinstance(authors_value, dict):
+                _authors = authors_value.get("authors", [])
+                if isinstance(_authors, list):
+                    allAuthors = ", ".join(item.get('name', '') for item in _authors if isinstance(item, dict))
+                else:
+                    allAuthors = "Unknown Author"
+            else:
+                allAuthors = "Unknown Author"
+            
             title = _title.lower().replace(" ", "_")
             title_dir_path = os.path.join(artifacts_root_directory, "audiobooks", title)
             clips_dir_path = os.path.join(title_dir_path, "clips")
@@ -458,3 +742,160 @@ class AudibleAPI:
 
     def bookmark_response_callback(self, resp):
         return resp
+
+    async def cmd_export_bookmarks(self):
+        """Export bookmarks to JSON file in current directory"""
+        li_books = await self.get_book_selection()
+        
+        all_bookmarks = []
+        
+        for book in li_books:
+            asin = book.get("asin")
+            # Handle both string and nested dictionary formats for title
+            title_value = book.get("title", {})
+            if isinstance(title_value, str):
+                _title = title_value
+            else:
+                _title = title_value.get("title", "untitled")
+            
+            if not _title:
+                continue
+
+            title = _title.lower().replace(" ", "_")
+            
+            print(f"Getting bookmarks for {_title}")
+            
+            # Get bookmarks from Audible API
+            bookmarks_url = f"https://cde-ta-g7g.amazon.com/FionaCDEServiceEngine/sidecar?type=AUDI&key={asin}"
+            
+            try:
+                with audible.Client(auth=self.auth, response_callback=self.bookmark_response_callback) as client:
+                    library = client.get(
+                        bookmarks_url,
+                        num_results=1000,
+                        response_groups="product_desc, product_attrs"
+                    )
+                    
+                    li_bookmarks = library.json().get("payload", {}).get("records", [])
+                    
+                    # Process bookmarks into a simple format
+                    for bookmark in li_bookmarks:
+                        bookmark_data = {
+                            "book_title": _title,
+                            "asin": asin,
+                            "type": bookmark.get("type", ""),
+                            "start_position": bookmark.get("startPosition", 0),
+                            "end_position": bookmark.get("endPosition", bookmark.get("startPosition", 0) + 30000),
+                            "text": bookmark.get("text", ""),
+                            "note": bookmark.get("note", ""),
+                            "creation_time": bookmark.get("creationTime", "")
+                        }
+                        all_bookmarks.append(bookmark_data)
+                        
+            except Exception as e:
+                print(f"Error getting bookmarks for {_title}: {e}")
+                continue
+        
+        # Save to bookmarks.json in current directory
+        import json
+        import os
+        
+        output_file = "bookmarks.json"
+        with open(output_file, 'w') as f:
+            json.dump(all_bookmarks, f, indent=2)
+        
+        print(f"Bookmarks exported to: {output_file}")
+        print(f"Total bookmarks exported: {len(all_bookmarks)}")
+        
+        # Verify the file was created and has content
+        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+            print(f"✅ Export successful! File size: {os.path.getsize(output_file)} bytes")
+        else:
+            print("❌ Export failed - file was not created or is empty")
+
+    async def cmd_export_bookmarks_simple(self, book_index=0):
+        """Export bookmarks to JSON file in current directory with automatic book selection"""
+        # Get library if not already loaded
+        if not self.library:
+            await self.get_library()
+        
+        # Select book by index (default to first book)
+        try:
+            book_index = int(book_index)
+            if 0 <= book_index < len(self.library["items"]):
+                selected_book = self.library["items"][book_index]
+                li_books = [{"title": selected_book.get("title", 'untitled'), "asin": selected_book["asin"]}]
+                print(f"Selected book: {selected_book.get('title', 'untitled')}")
+            else:
+                print(f"Invalid book index {book_index}. Available books: 0-{len(self.library['items'])-1}")
+                return
+        except (ValueError, IndexError):
+            print("Invalid book index")
+            return
+        
+        all_bookmarks = []
+        
+        for book in li_books:
+            asin = book.get("asin")
+            _title = book.get("title", 'untitled')
+            if not _title:
+                continue
+
+            print(f"Getting bookmarks for {_title}")
+            
+            # Get bookmarks from Audible API
+            bookmarks_url = f"https://cde-ta-g7g.amazon.com/FionaCDEServiceEngine/sidecar?type=AUDI&key={asin}"
+            
+            try:
+                with audible.Client(auth=self.auth, response_callback=self.bookmark_response_callback) as client:
+                    library = client.get(
+                        bookmarks_url,
+                        num_results=1000,
+                        response_groups="product_desc, product_attrs"
+                    )
+                    
+                    li_bookmarks = library.json().get("payload", {}).get("records", [])
+                    
+                    # Process bookmarks into a simple format
+                    for bookmark in li_bookmarks:
+                        # Convert milliseconds to a more standard format for the pipeline
+                        start_ms = int(bookmark.get("startPosition", 0))
+                        end_ms = int(bookmark.get("endPosition", start_ms + 30000))
+                        
+                        bookmark_data = {
+                            "start_ms": start_ms,
+                            "end_ms": end_ms,
+                            "start": start_ms,  # Alternative field name
+                            "end": end_ms,      # Alternative field name
+                            "position": start_ms,  # Another alternative
+                            "book_title": _title,
+                            "asin": asin,
+                            "type": bookmark.get("type", ""),
+                            "text": bookmark.get("text", ""),
+                            "note": bookmark.get("note", ""),
+                            "creation_time": bookmark.get("creationTime", "")
+                        }
+                        all_bookmarks.append(bookmark_data)
+                        
+            except Exception as e:
+                print(f"Error getting bookmarks for {_title}: {e}")
+                continue
+        
+        # Save to bookmarks.json in current directory
+        import json
+        import os
+        
+        output_file = "bookmarks.json"
+        with open(output_file, 'w') as f:
+            json.dump(all_bookmarks, f, indent=2)
+        
+        print(f"Bookmarks exported to: {output_file}")
+        print(f"Total bookmarks exported: {len(all_bookmarks)}")
+        
+        # Verify the file was created and has content
+        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+            print(f"✅ Export successful! File size: {os.path.getsize(output_file)} bytes")
+            return True
+        else:
+            print("❌ Export failed - file was not created or is empty")
+            return False

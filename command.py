@@ -13,6 +13,7 @@ help_dict = {
     "convert_audiobook": "Removes Audible DRM from the selected audiobooks and converts them to .mp3 so they can be sliced",
     "get_bookmarks": "WIP, extracts all timestamps for bookmarks in the selected audiobook",
     "transcribe_bookmarks": "Self-explanatory, connects to Speech Recognition API and outputs the result",
+    "export_bookmarks": "Export bookmarks to JSON file in current directory",
     "quit/exit": "Exits this application"
 }
 
@@ -51,7 +52,22 @@ class Command:
     
   async def command_loop(self):
     command_input = input("\n\nEnter command: ")
-    command = command_input.split(" ")[0]
+    command_parts = command_input.split()
+    command = command_parts[0] if command_parts else ""
+    
+    # Handle commands with simple parameters (like "export_bookmarks_simple 0")
+    if len(command_parts) > 1 and command == "export_bookmarks_simple":
+        try:
+            book_index = int(command_parts[1])
+            await getattr(self.audible_obj, f"cmd_{command}", self.invalid_command_callback)(book_index)
+            await self.command_loop()
+            return
+        except (ValueError, IndexError):
+            print("Invalid book index")
+            await self.command_loop()
+            return
+    
+    # Original kwargs parsing for other commands
     additional_kwargs = command_input.replace(command, '')
     _kwargs = {}
 
@@ -63,11 +79,14 @@ class Command:
 
             if not len(li_kwarg) > 1:
                 await self.invalid_kwarg_callback()
+                return
 
             _kwargs[li_kwarg[0]] = li_kwarg[1]
 
     if not self.audible_obj and command not in AUTHLESS_COMMANDS:
         await self.invalid_auth_callback()
+        return
+        
     # Takes the command supplied and sees if we have a function with the prefix cmd_ that we can execute with the given kwargs
     if command == "help":
       self.show_help()
@@ -94,4 +113,4 @@ class Command:
       print("Invalid command or arguments supplied, try again")      
     
   async def invalid_auth_callback(self):
-      print("Invalid Audible credentials, run authenticate and try again")      
+      print("Invalid Audible credentials, run authenticate and try again")
